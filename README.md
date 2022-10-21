@@ -8,3 +8,4 @@ This project is school homework for Parallel Programming subject.
 [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/drwpls/cuda/blob/HW1/HW1/HW1.ipynb)
 
 ## HW2:
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/drwpls/cuda/blob/HW2/HW2/HW2.ipynb)
