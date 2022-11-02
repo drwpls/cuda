@@ -120,7 +120,7 @@ void addVec(int *in1, int *in2, int n,
             int nElements = (i == nStreams - 1) ? n - offset : nPerStream;
 
             dim3 gridSize((nElements + blockSize.x - 1) / blockSize.x);
-            addVecKernel<<<gridSize, blockSize>>>(d_in1 + offset, d_in2 + offset, nElements, d_out + offset);
+            addVecKernel<<<gridSize, blockSize, 0, streams[i]>>>(d_in1 + offset, d_in2 + offset, nElements, d_out + offset);
         }
 
         for (int i = 0; i < nStreams; i++)
