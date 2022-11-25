@@ -220,6 +220,7 @@ void blurImg(uchar3 * inPixels, int width, int height, float * filter, int filte
 		else
 		{
 			// TODO: copy data from "filter" (on host) to "dc_filter" (on CMEM of device)
+            cudaMemcpyToSymbol(dc_filter, filter, filterSize);
 
 		}
 
@@ -230,6 +231,7 @@ void blurImg(uchar3 * inPixels, int width, int height, float * filter, int filte
 		if (kernelType == 1)
 		{
 			// TODO: call blurImgKernel1
+            blurImgKernel3<<<gridSize, blockSize>>>(d_inPixels, width, height, dc_filter, filterWidth, d_outPixels);
 
 		}
 		else if (kernelType == 2)
