@@ -107,7 +107,7 @@ void sortByHost(const uint32_t * in, int n,
 __device__ int bCount = 0;
 volatile __device__ int bCount1 = 0;
 
-__global__ void scanBlkKernel3(int * in, int n, int * out, volatile int * blkSums);
+__global__ void scan(int * in, int n, int * out, volatile int * blkSums);
 // Parallel Radix Sort
 void sortByDevice(const uint32_t * in, int n, uint32_t * out, int blockSize)
 {
@@ -153,7 +153,7 @@ void sortByDevice(const uint32_t * in, int n, uint32_t * out, int blockSize)
         CHECK(cudaMemcpyToSymbol(bCount1,&zer0,sizeof(int)));
 
         CHECK(cudaMemcpy(d_in, bits, nBytes, cudaMemcpyHostToDevice));
-        scanBlkKernel3<<<gridSize, blockSize, smem>>>(d_in, n, d_out, d_blkSums);
+        scan<<<gridSize, blockSize, smem>>>(d_in, n, d_out, d_blkSums);
         cudaDeviceSynchronize();
         CHECK(cudaGetLastError());
 
@@ -305,7 +305,7 @@ The sum of all elements is at end of shared mem. (this is needed for scan auxili
 
 */
 
-__global__ void scanBlkKernel3(int * in, int n, int * out, volatile int * blkSums)
+__global__ void scan(int * in, int n, int * out, volatile int * blkSums)
 {
     __shared__ int bi;
 	extern __shared__ int s_data[];
