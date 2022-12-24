@@ -106,88 +106,76 @@ void sortByHost(const uint32_t * in, int n,
 
 __device__ int bCount = 0;
 volatile __device__ int bCount1 = 0;
+__device__ int nZero = 0;
 
-__global__ void scan(int * in, int n, int * out, volatile int * blkSums);
+__global__ void radixSort(uint32_t * src, uint32_t * dst, int n, uint32_t * nOnesBefore, int bitIdx);
+__global__ void scan(uint32_t * in, int n, uint32_t * out, int bitIdx, volatile uint32_t * blkSums);
+
+void printArray(uint32_t * a, int n);
+
 // Parallel Radix Sort
 void sortByDevice(const uint32_t * in, int n, uint32_t * out, int blockSize)
 {
     // Host settings
-    int * bits = (int *)malloc(n * sizeof(int));
     int * nOnesBefore = (int *)malloc(n * sizeof(int));
-
-    uint32_t * src = (uint32_t *)malloc(n * sizeof(uint32_t));
-    uint32_t * originalSrc = src; // To free memory later
-    memcpy(src, in, n * sizeof(uint32_t));
-    uint32_t * dst = out;
 
     // Kernel settings
     int blkDataSize = 2 * blockSize;
-    int * d_in, * d_out, * d_blkSums;
+    uint32_t * d_in, * d_out, * d_blkSums, * d_countzero;
     size_t nBytes = n * sizeof(int);
     size_t smem = (blkDataSize + 1) * sizeof(int);
     int zer0 = 0;
 
-    CHECK(cudaMalloc(&d_in, nBytes)); 
+    CHECK(cudaMalloc(&d_in, nBytes));
     CHECK(cudaMalloc(&d_out, nBytes)); 
-    dim3 gridSize((n - 1) / blkDataSize + 1);
-    if (gridSize.x > 1)
+    CHECK(cudaMalloc(&d_countzero, nBytes)); 
+    dim3 gridSizeInScan((n - 1) / blkDataSize + 1);
+    dim3 gridSizeInSort((n - 1) / blockSize + 1);
+
+    if (gridSizeInScan.x > 1)
     {
-        CHECK(cudaMalloc(&d_blkSums, gridSize.x * sizeof(int)));
+        CHECK(cudaMalloc(&d_blkSums, gridSizeInScan.x * sizeof(int)));
     }
     else
     {
         d_blkSums = NULL;
     }
+    CHECK(cudaMemcpy(d_in, in, nBytes, cudaMemcpyHostToDevice));
         
     // Loop from LSB (Least Significant Bit) to MSB (Most Significant Bit)
 	// In each loop, sort elements according to the current bit from src to dst 
 	// (using STABLE counting sort)
     for (int bitIdx = 0; bitIdx < sizeof(uint32_t) * 8; bitIdx++)
-    {
-        // Extract bits
-        for (int i = 0; i < n; i++)
-            bits[i] = (src[i] >> bitIdx) & 1;
-        
+    {        
         // copy data to reduce
         CHECK(cudaMemcpyToSymbol(bCount,&zer0,sizeof(int)));
         CHECK(cudaMemcpyToSymbol(bCount1,&zer0,sizeof(int)));
+        CHECK(cudaMemcpyToSymbol(nZero,&zer0,sizeof(int)));
 
-        CHECK(cudaMemcpy(d_in, bits, nBytes, cudaMemcpyHostToDevice));
-        scan<<<gridSize, blockSize, smem>>>(d_in, n, d_out, d_blkSums);
+        scan<<<gridSizeInScan, blockSize, smem>>>(d_in, n, d_countzero, bitIdx, d_blkSums);
         cudaDeviceSynchronize();
         CHECK(cudaGetLastError());
 
-        CHECK(cudaMemcpy(nOnesBefore, d_out, nBytes, cudaMemcpyDeviceToHost));
+        radixSort<<<gridSizeInSort, blockSize>>>(d_in, d_out, n, d_countzero, bitIdx);
+        cudaDeviceSynchronize();
+        CHECK(cudaGetLastError());
 
-        // Compute rank and write to dst
-        int nZeros = n - nOnesBefore[n-1] - bits[n-1];
-        for (int i = 0; i < n; i++)
-        {
-            int rank;
-            if (bits[i] == 0)
-                rank = i - nOnesBefore[i];
-            else
-                rank = nZeros + nOnesBefore[i];
-            dst[rank] = src[i];
-        }
-
-        // Swap src and dst
-        uint32_t * temp = src;
-        src = dst;
-        dst = temp;
+        uint32_t * temp = d_in;
+        d_in = d_out; 
+        d_out = temp;
     }
 
     // Does out array contain results?
-    memcpy(out, src, n * sizeof(uint32_t));
+    CHECK(cudaMemcpy(out, d_in, nBytes, cudaMemcpyDeviceToHost));
 
     // Free memory
-    free(originalSrc);
-    free(bits);
     free(nOnesBefore);
 
     CHECK(cudaFree(d_in));
     CHECK(cudaFree(d_out));
     CHECK(cudaFree(d_blkSums));
+    CHECK(cudaFree(d_countzero));
+
 }
 
 // Radix Sort
@@ -255,7 +243,7 @@ int main(int argc, char ** argv)
     printDeviceInfo();
 
     // SET UP INPUT SIZE
-    //int n = 50; // For test by eye
+    // int n = 50; // For test by eye
     int n = (1 << 24) + 1;
     printf("\nInput size: %d\n", n);
 
@@ -305,10 +293,10 @@ The sum of all elements is at end of shared mem. (this is needed for scan auxili
 
 */
 
-__global__ void scan(int * in, int n, int * out, volatile int * blkSums)
+__global__ void scan(uint32_t * in, int n, uint32_t * out, int bitIdx, volatile uint32_t * blkSums)
 {
     __shared__ int bi;
-	extern __shared__ int s_data[];
+	extern __shared__ uint32_t s_data[];
 
     // Get the index bi that has the order
     if (threadIdx.x == 0) {
@@ -321,10 +309,12 @@ __global__ void scan(int * in, int n, int * out, volatile int * blkSums)
 	int i1 = bi * 2 * blockDim.x + threadIdx.x;
 	int i2 = i1 + blockDim.x;
 	if (i1 < n)
-		s_data[threadIdx.x + 1] = in[i1];
+		s_data[threadIdx.x + 1] = (in[i1] >> bitIdx) & 1;
 	if (i2 < n)
-		s_data[threadIdx.x + blockDim.x + 1] = in[i2];
+		s_data[threadIdx.x + blockDim.x + 1] = (in[i2] >> bitIdx) & 1;
 	__syncthreads();
+
+    int lastBit = s_data[n % (2 * blockDim.x)];
 
 	// Each block does scan with data on SMEM
 	// Reduction phase
@@ -372,4 +362,28 @@ __global__ void scan(int * in, int n, int * out, volatile int * blkSums)
 		out[i1] = s_data[threadIdx.x];
 	if (i2 < n)
 		out[i2] = s_data[threadIdx.x + blockDim.x];
+    if (i1 == n - 1) 
+    {
+        int nZeros = n - s_data[threadIdx.x] - lastBit;
+        nZero = nZeros;
+    }
+
+    if (i2 == n - 1) 
+    { 
+        int nZeros = n - s_data[threadIdx.x + blockDim.x] - lastBit;
+        nZero = nZeros;
+    }
 }
+
+__global__ void radixSort(uint32_t * src, uint32_t * dst, int n, uint32_t * nOnesBefore, int bitIdx)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) {
+        int rank;
+        if (((src[i] >> bitIdx) & 1) == 0)
+            rank = i - nOnesBefore[i];
+        else
+            rank = nZero + nOnesBefore[i];
+        dst[rank] = src[i];
+    }
+} 
