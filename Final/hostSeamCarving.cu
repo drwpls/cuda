@@ -225,11 +225,11 @@ void seamCarving(uchar3 * inPixels, int width, int height, uchar3 * outPixels,
 {
     if (useDevice == false)
     {
-        uint8_t * grayPixels = (uint8_t *)malloc(width * height);
-        int * energyMap = (int *)malloc(width * height);
-        int * backtrack = (int *)malloc(width * height);
-        int * L1 = (int *)malloc(width);
-        int * L2 = (int *)malloc(width);
+        uint8_t * grayPixels = (uint8_t *)malloc(width * height * sizeof(uint8_t));
+        int * energyMap = (int *)malloc(width * height * sizeof(int));
+        int * backtrack = (int *)malloc(width * height * sizeof(int));
+        int * L1 = (int *)malloc(width * sizeof(int));
+        int * L2 = (int *)malloc(width * sizeof(int));
 
         convertGrayscale(inPixels, width, height, grayPixels);
 
