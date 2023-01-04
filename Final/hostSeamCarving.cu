@@ -238,7 +238,7 @@ void seamCarving(uchar3 * inPixels, int width, int height, uchar3 * outPixels,
         int * L2 = (int *)malloc(width * sizeof(int));
 
         uchar3 * tempPixels = (uchar3 *)malloc(width * height * sizeof(uchar3));
-        memcpy(tempPixels, inPixels, width * height * sizeof(int));
+        memcpy(tempPixels, inPixels, width * height * sizeof(uchar3));
 
         for (int i = 0; i < 256; i++) {
             convertGrayscale(tempPixels, width - i, height, grayPixels);
