@@ -103,6 +103,8 @@ void writePnm(uchar3 *pixels, int width, int height, char *fileName)
 
     fprintf(f, "P3\n%i\n%i\n255\n", width, height);
 
+    printf("\nImage output size (width x height): %i x %i\n", width, height);
+
     for (int i = 0; i < width * height; i++)
         fprintf(f, "%hhu\n%hhu\n%hhu\n", pixels[i].x, pixels[i].y, pixels[i].z);
 
@@ -142,8 +144,8 @@ void calcEnergy(uint8_t * grayPixels, int width, int height, int * energyMap,
                     int grayPixelsC = c - filterWidth / 2 + filterC;
                     grayPixelsR = min(max(0, grayPixelsR), height - 1);
                     grayPixelsC = min(max(0, grayPixelsC), width - 1);
-                    uint8_t grayPixel = grayPixels[r * width + c];
-                    convolutionX += filterValX * grayPixel;
+                    uint8_t grayPixel = grayPixels[grayPixelsR * width + grayPixelsC];
+                    convolutionX += filterValX * (int)grayPixel;
 
                     // Calc convolution with Y-Sobel filter
                     int filterValY = filterYSobel[filterR * filterWidth + filterC];
@@ -151,8 +153,8 @@ void calcEnergy(uint8_t * grayPixels, int width, int height, int * energyMap,
                     grayPixelsC = c - filterWidth / 2 + filterC;
                     grayPixelsR = min(max(0, grayPixelsR), height - 1);
                     grayPixelsC = min(max(0, grayPixelsC), width - 1);
-                    grayPixel = grayPixels[r * width + c];
-                    convolutionY += filterValY * grayPixel;
+                    grayPixel = grayPixels[grayPixelsR * width + grayPixelsC];
+                    convolutionY += filterValY * (int)grayPixel;
                 }
             }
 
@@ -204,15 +206,19 @@ void deleteSeam(uchar3 * inPixels, int width, int height, uchar3 * outPixels,
     }
     for (int r = height - 1; r >= 0; r--) {
         seamPath[r] = posMin;
+        // printf("\n%i\n", seamPath[r]);
         posMin = backtrack[r * width + posMin];
     }
 
     for (int r = 0; r < height; r++) {
         for (int c = 0; c < width; c++) {
             int i = r * width + c;
+            int _i = r * (width - 1) + c;
             if (c == seamPath[r])
                 continue;
-            outPixels[i] = inPixels[i];
+            if (c > seamPath[r])
+                _i--;
+            outPixels[_i] = inPixels[i];
         }
     }
 
@@ -231,19 +237,32 @@ void seamCarving(uchar3 * inPixels, int width, int height, uchar3 * outPixels,
         int * L1 = (int *)malloc(width * sizeof(int));
         int * L2 = (int *)malloc(width * sizeof(int));
 
-        convertGrayscale(inPixels, width, height, grayPixels);
+        uchar3 * tempPixels = (uchar3 *)malloc(width * height * sizeof(uchar3));
+        memcpy(tempPixels, inPixels, width * height * sizeof(int));
 
-        calcEnergy(grayPixels, width, height, energyMap, filterXSobel, filterYSobel, filterWidth);
+        for (int i = 0; i < 256; i++) {
+            convertGrayscale(tempPixels, width - i, height, grayPixels);
 
-        findMinimumSeam(energyMap, width, height, backtrack, L1, L2);
+            calcEnergy(grayPixels, width - i, height, energyMap, filterXSobel, filterYSobel, filterWidth);
 
-        deleteSeam(inPixels, width, height, outPixels, backtrack, L1, L2);
+            findMinimumSeam(energyMap, width - i, height, backtrack, L1, L2);
+
+            deleteSeam(tempPixels, width - i, height, tempPixels, backtrack, L1, L2);
+        }
+
+        for (int r = 0; r < height; r++) {
+            for (int c = 0; c < width - 256; c++) {
+                int i = r * (width - 256) + c;
+                outPixels[i] = tempPixels[i];
+            }
+        }
 
         free(grayPixels);
         free(energyMap);
         free(backtrack);
         free(L1);
         free(L2);
+        free(tempPixels);
     }
     else // Use device
     {
@@ -344,7 +363,7 @@ int main(int argc, char **argv)
     filterYSobel[6] = -1, filterYSobel[7] = -2, filterYSobel[8] = -1;
 
     // Blur input image not using device
-    uchar3 *outPixels = (uchar3 *)malloc((width - 1) * height * sizeof(uchar3));
+    uchar3 *outPixels = (uchar3 *)malloc((width - 256) * height * sizeof(uchar3));
     seamCarving(inPixels, width, height, outPixels, filterXSobel, filterYSobel, filterWidth);
 
     // Blur input image using device, kernel 1
@@ -360,7 +379,7 @@ int main(int argc, char **argv)
 
     // Write results to files
     char *outFileNameBase = strtok(argv[2], "."); // Get rid of extension 
-    writePnm(outPixels, width - 1, height, concatStr(outFileNameBase, "_host.pnm"));
+    writePnm(outPixels, width - 256, height, concatStr(outFileNameBase, "_host.pnm"));
     // writePnm(outPixels1, width, height, concatStr(outFileNameBase, "_device1.pnm"));
     // writePnm(outPixels2, width, height, concatStr(outFileNameBase, "_device2.pnm"));
     // writePnm(outPixels3, width, height, concatStr(outFileNameBase, "_device3.pnm"));
