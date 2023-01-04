@@ -122,12 +122,17 @@ void convertGrayscale(uchar3 *inPixels, int width, int height, uint8_t * grayPix
     }
 }
 
+int abs(int x) {
+    return x < 0 ? -1 * x : x;
+}
+
 void calcEnergy(uint8_t * grayPixels, int width, int height, int * energyMap,
                 int * filterXSobel, int * filterYSobel, int filterWidth)
 {
     for (int r = 0; r < height; r++) {
         for (int c = 0; c < width; c++) {
-            int convolutionX = 0, convolutionY = 0;
+            int convolutionX = 0;
+            int convolutionY = 0;
 
             for (int filterR = 0; filterR < filterWidth; filterR++) {
                 for (int filterC = 0; filterC < filterWidth; filterC++) {
@@ -354,7 +359,7 @@ int main(int argc, char **argv)
     // printError(outPixels1, correctOutPixels, width, height);
 
     // Write results to files
-    char *outFileNameBase = strtok(argv[2], "."); // Get rid of extension
+    char *outFileNameBase = strtok(argv[2], "."); // Get rid of extension 
     writePnm(outPixels, width - 1, height, concatStr(outFileNameBase, "_host.pnm"));
     // writePnm(outPixels1, width, height, concatStr(outFileNameBase, "_device1.pnm"));
     // writePnm(outPixels2, width, height, concatStr(outFileNameBase, "_device2.pnm"));
