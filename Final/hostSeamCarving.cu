@@ -114,9 +114,9 @@ void convertGrayscale(uchar3 *inPixels, int width, int height, uint8_t * grayPix
     for (int r = 0; r < height; r++) {
         for (int c = 0; c < width; c++) {
             int i = r * width + c;
-            uint8_t red = inPixels[3 * i];
-            uint8_t green = inPixels[3 * i + 1];
-            uint8_t blue = inPixels[3 * i + 2];
+            uint8_t red = inPixels[i].x;
+            uint8_t green = inPixels[i].y;
+            uint8_t blue = inPixels[i].z;
             grayPixels[i] = 0.299f*red + 0.587f*green + 0.114f*blue;
         }
     }
@@ -129,7 +129,7 @@ void calcEnergy(uint8_t * grayPixels, int width, int height, int * energyMap,
         for (int c = 0; c < width; c++) {
             int convolutionX = 0, convolutionY = 0;
 
-            for (int filterR = 0; filterR < filterWidth, filterR++) {
+            for (int filterR = 0; filterR < filterWidth; filterR++) {
                 for (int filterC = 0; filterC < filterWidth; filterC++) {
                     // Calc convolution with X-Sobel filter
                     int filterValX = filterXSobel[filterR * filterWidth + filterC];
@@ -137,7 +137,7 @@ void calcEnergy(uint8_t * grayPixels, int width, int height, int * energyMap,
                     int grayPixelsC = c - filterWidth / 2 + filterC;
                     grayPixelsR = min(max(0, grayPixelsR), height - 1);
                     grayPixelsC = min(max(0, grayPixelsC), width - 1);
-                    uint8_t grayPixel = grayPixels[inPixelsR * width + inPixelsC];
+                    uint8_t grayPixel = grayPixels[r * width + c];
                     convolutionX += filterValX * grayPixel;
 
                     // Calc convolution with Y-Sobel filter
@@ -146,7 +146,7 @@ void calcEnergy(uint8_t * grayPixels, int width, int height, int * energyMap,
                     grayPixelsC = c - filterWidth / 2 + filterC;
                     grayPixelsR = min(max(0, grayPixelsR), height - 1);
                     grayPixelsC = min(max(0, grayPixelsC), width - 1);
-                    grayPixel = grayPixels[inPixelsR * width + inPixelsC];
+                    grayPixel = grayPixels[r * width + c];
                     convolutionY += filterValY * grayPixel;
                 }
             }
@@ -156,7 +156,7 @@ void calcEnergy(uint8_t * grayPixels, int width, int height, int * energyMap,
     }
 }
 
-void findMinimumSeam(uint8_t * energyMap, int width, int height,
+void findMinimumSeam(int * energyMap, int width, int height,
                     int * backtrack, int * L1, int * L2)
 {
     for (int c = 0; c < width; c++) {
