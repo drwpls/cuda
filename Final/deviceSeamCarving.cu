@@ -211,7 +211,7 @@ __global__ void calcEnergyKernel(uint8_t * grayPixels, int width, int height, in
             }
         }
 
-        energyMap[r * width + c] = abs(convolutionX) + abs(convolutionY);
+        energyMap[i] = abs(convolutionX) + abs(convolutionY);
     }
 }
 
@@ -267,7 +267,7 @@ __global__ void findMinimumSeamKernel(int * energyMap, int width, int height,
         __syncthreads();
 
         if (threadIdx.x == 0)
-            atomicAdd(&bCount1, 1);
+            bCount1 += 1;
     }
 
     if (r > 0 && r < height) {
@@ -281,7 +281,7 @@ __global__ void findMinimumSeamKernel(int * energyMap, int width, int height,
         __syncthreads();
 
         if (threadIdx.x == 0 && (bCount1 + 1) * blockDim.x / width < r + 1) {
-            atomicAdd(&bCount1, 1);
+            bCount1 += 1;
         }
     }
 
@@ -437,7 +437,7 @@ void seamCarving(uchar3 * inPixels, int width, int height, uchar3 * outPixels,
         CHECK(cudaMemcpy(d_filterXSobel, filterXSobel, filterWidth * filterWidth * sizeof(int), cudaMemcpyHostToDevice));
         CHECK(cudaMemcpy(d_filterYSobel, filterYSobel, filterWidth * filterWidth * sizeof(int), cudaMemcpyHostToDevice));
 
-        CHECK(malloc(&d_seamPath, height * sizeof(int)));
+        CHECK(cudaMalloc(&d_seamPath, height * sizeof(int)));
 
         for (int i = 0; i < 256; i++) {
             dim3 gridSizeBlock2D((width - i - 1) / blockSize.x + 1, (height - 1) / blockSize.y + 1);
@@ -464,7 +464,7 @@ void seamCarving(uchar3 * inPixels, int width, int height, uchar3 * outPixels,
             int * curL2 = (int *)malloc(sizeof(int));
             
             for (int k = 0; k < width - i; k++) {
-                CHECK(cudaMemcpyFromSymbol(curL2, &L2[k], sizeof(int)));
+                CHECK(cudaMemcpyFromSymbol(curL2, &d_L2[k], sizeof(int)));
                 if (energyMin > curL2[0]) {
                     energyMin = curL2[0];
                     posMin[0] = k;
