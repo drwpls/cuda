@@ -266,8 +266,10 @@ __global__ void findMinimumSeamKernel(int * energyMap, int width, int height,
 
         __syncthreads();
 
-        if (threadIdx.x == 0)
+        if (threadIdx.x == 0) {
+            while (bCount1 < bi) {}
             bCount1 += 1;
+        }
     }
 
     if (r > 0 && r < height) {
@@ -281,6 +283,7 @@ __global__ void findMinimumSeamKernel(int * energyMap, int width, int height,
         __syncthreads();
 
         if (threadIdx.x == 0 && (bCount1 + 1) * blockDim.x / width < r + 1) {
+            while (bCount1 < bi) {}
             bCount1 += 1;
         }
     }
