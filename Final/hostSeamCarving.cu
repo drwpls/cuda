@@ -2,6 +2,8 @@
 #include <stdint.h>
 #include <vector_functions.h>
 
+#define WIDTH_REMOVE 16
+
 #define FILTER_WIDTH 3
 // __constant__ float dc_filter[FILTER_WIDTH * FILTER_WIDTH];
 
@@ -238,7 +240,7 @@ void seamCarving(uchar3 * inPixels, int width, int height, uchar3 * outPixels,
         uchar3 * tempPixels = (uchar3 *)malloc(width * height * sizeof(uchar3));
         memcpy(tempPixels, inPixels, width * height * sizeof(uchar3));
 
-        for (int i = 0; i < 256; i++) {
+        for (int i = 0; i < WIDTH_REMOVE; i++) {
             convertGrayscale(tempPixels, width - i, height, grayPixels);
 
             calcEnergy(grayPixels, width - i, height, energyMap, filterXSobel, filterYSobel, filterWidth);
@@ -249,8 +251,8 @@ void seamCarving(uchar3 * inPixels, int width, int height, uchar3 * outPixels,
         }
 
         for (int r = 0; r < height; r++) {
-            for (int c = 0; c < width - 256; c++) {
-                int i = r * (width - 256) + c;
+            for (int c = 0; c < width - WIDTH_REMOVE; c++) {
+                int i = r * (width - WIDTH_REMOVE) + c;
                 outPixels[i] = tempPixels[i];
             }
         }
@@ -361,7 +363,7 @@ int main(int argc, char **argv)
     filterYSobel[6] = -1, filterYSobel[7] = -2, filterYSobel[8] = -1;
 
     // Blur input image not using device
-    uchar3 *outPixels = (uchar3 *)malloc((width - 256) * height * sizeof(uchar3));
+    uchar3 *outPixels = (uchar3 *)malloc((width - WIDTH_REMOVE) * height * sizeof(uchar3));
     seamCarving(inPixels, width, height, outPixels, filterXSobel, filterYSobel, filterWidth);
 
     // Blur input image using device, kernel 1
@@ -377,7 +379,7 @@ int main(int argc, char **argv)
 
     // Write results to files
     char *outFileNameBase = strtok(argv[2], "."); // Get rid of extension 
-    writePnm(outPixels, width - 256, height, concatStr(outFileNameBase, "_host.pnm"));
+    writePnm(outPixels, width - WIDTH_REMOVE, height, concatStr(outFileNameBase, "_host.pnm"));
     // writePnm(outPixels1, width, height, concatStr(outFileNameBase, "_device1.pnm"));
     // writePnm(outPixels2, width, height, concatStr(outFileNameBase, "_device2.pnm"));
     // writePnm(outPixels3, width, height, concatStr(outFileNameBase, "_device3.pnm"));
