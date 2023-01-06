@@ -243,11 +243,12 @@ void findMinimumSeam(int * energyMap, int width, int height,
         }
         memcpy(L1, L2, width * sizeof(int));
 
-        if (r == 1) {
-            for (int c = 0; c < width; c++) {
-                printf("\n%i\n", L1[c]);
-            }
-        }
+        // To debug
+        // if (r == 1) {
+        //     for (int c = 0; c < width; c++) {
+        //         printf("\n%i\n", L1[c]);
+        //     }
+        // }
     }
 }
 
@@ -261,6 +262,7 @@ __global__ void memcpyDevice2DeviceInt(int * dst, int * src, int n)
 
 __device__ int bCount = 0;
 volatile __device__ int bCount1 = 0;
+volatile __device__ int bRowCount = 0; // To count the number of blocks of a row that completed the calculation L1
 
 __global__ void findMinimumSeamKernel(int * energyMap, int width, int height,
                                     int * backtrack, volatile int * L1, volatile int * L2)
@@ -278,6 +280,7 @@ __global__ void findMinimumSeamKernel(int * energyMap, int width, int height,
     int c = (bi % blockPerRow) * blockDim.x + threadIdx.x;
 
     if (r == 0) {
+        // This block code like line "memcpy(L1, energyMap, width * sizeof(int));" in function findMinimumSeam
         if (c < width) {
             L1[c] = energyMap[c];
         }
@@ -290,22 +293,34 @@ __global__ void findMinimumSeamKernel(int * energyMap, int width, int height,
         }
     }
     else if (r < height) {
-        while ((int)(bCount1 / blockPerRow) < r) {}
+        while ((int)(bCount1 / blockPerRow) < r) {} // make sure previous rows complete the calculation
 
-        if (r > 1) {
+        if (r > 1) { // This block code like line "memcpy(L1, L2, width * sizeof(int));" in function findMinimumSeam
             if (c < width) {
                 L1[c] = L2[c];
             }
         }
         __syncthreads();
 
-        while (bCount1 < bi) {}
+        while (bCount1 < bi) {} // make sure only 1 block updates bCount1 at a time
 
-        if (threadIdx.x == 0 && (int)((bCount1 + 1) / blockPerRow) < r + 1) {
-            bCount1 += 1;
+        if (threadIdx.x == 0) {
+            bRowCount += 1;
+            __threadfence();
+
+            if ((int)((bCount1 + 1) / blockPerRow) < r + 1) {
+                // This condition to make sure this case:
+                // If width > blockSize.x: blockPerRow > 1:
+                //          The 1st, 2nd, 3rd, ... block of current row can update bCount1.
+                //          However, the last block of current row can only update bCount1 after completing the calculation of that block
+                // In case: blockPerRow == 1:
+                //          Update bCount1 after the current block completes the calculation
+                bCount1 += 1;
+            }
         }
 
-        while (bCount1 < bi + 2 && (int)((bCount1 + 1) / blockPerRow) < r + 1) {}
+        // Wait for block (bi+1) to finish setting L1[c] = L2[c], because current block uses the firsst L1 of block (bi+1)
+        while ((bi % blockPerRow + 2) > bRowCount && bRowCount < blockPerRow) {}
         
         if (c < width) {
             int i = r * width + c;
@@ -328,8 +343,10 @@ __global__ void findMinimumSeamKernel(int * energyMap, int width, int height,
         }
         __syncthreads();
 
+        // If the current block is the last block of current row, update bCount1 and reset bRowCount
         if (threadIdx.x == 0 && (int)((bCount1 + 1) / blockPerRow) == r + 1) {
             bCount1 += 1;
+            bRowCount = 0;
         }
     }
 }
@@ -475,7 +492,7 @@ void seamCarving(uchar3 * inPixels, int width, int height, uchar3 * outPixels,
 
         for (int i = 0; i < WIDTH_REMOVE; i++) {
             dim3 gridSizeBlock2D((width - i - 1) / blockSize.x + 1, (height - 1) / blockSize.y + 1);
-            int blockSize1D = (int)blockSize.x * (int)blockSize.y;
+            int blockSize1D = (int)blockSize.x * (int)blockSize.y; // will be explained before use
             while (blockSize1D > 2 * width - 1) {
                 blockSize1D /= 2;
             }
@@ -499,6 +516,9 @@ void seamCarving(uchar3 * inPixels, int width, int height, uchar3 * outPixels,
             // }
             // free(energyMap);
 
+
+            // Because we can only compute row by row sequentially, we have to use 1-dimensional block
+            // We set blockSize1D = blockSize2D.x * blockSize2D.y to utilize resources (blockSize2D = blockSize)
             findMinimumSeamKernel<<<gridSizeBlock1D, blockSize1D>>>(d_energyMap, width - i, height,
                                                             d_backtrack, d_L1, d_L2);
             cudaDeviceSynchronize();
@@ -508,13 +528,15 @@ void seamCarving(uchar3 * inPixels, int width, int height, uchar3 * outPixels,
             // cudaDeviceSynchronize();
             // CHECK(cudaGetLastError());
 
-            int * L2 = (int *)malloc((width - i) * sizeof(int));
-            CHECK(cudaMemcpy(L2, d_L2, (width - i) * sizeof(int), cudaMemcpyDeviceToHost));
-            for (int c = 0; c < width - i; c++) {
-                printf("\n%i\n", L2[c]);
-            }
-            free(L2);
+            // To debug
+            // int * L2 = (int *)malloc((width - i) * sizeof(int));
+            // CHECK(cudaMemcpy(L2, d_L2, (width - i) * sizeof(int), cudaMemcpyDeviceToHost));
+            // for (int c = 0; c < width - i; c++) {
+            //     printf("\n%i\n", L2[c]);
+            // }
+            // free(L2);
 
+            // Exact seam path
             int energyMin = 1e9;
             int * posMin = (int *)malloc(sizeof(int));
             int * curL2 = (int *)malloc(sizeof(int));
@@ -533,6 +555,7 @@ void seamCarving(uchar3 * inPixels, int width, int height, uchar3 * outPixels,
                 // printf("\n%i\n", posMin[0]);
                 CHECK(cudaMemcpy(posMin, &d_backtrack[r * (width - i) + posMin[0]], sizeof(int), cudaMemcpyDeviceToHost));
             }
+            // End exact seam path
 
             free(posMin);
             free(curL2);
@@ -548,6 +571,7 @@ void seamCarving(uchar3 * inPixels, int width, int height, uchar3 * outPixels,
             CHECK(cudaMemcpyToSymbol(bCount,&zero,sizeof(int)));
             CHECK(cudaMemcpyToSymbol(bCount1,&zero,sizeof(int)));
         }
+
 
         CHECK(cudaMemcpy(outPixels, d_tempPixels, (width - WIDTH_REMOVE) * height * sizeof(uchar3), cudaMemcpyDeviceToHost));
         
