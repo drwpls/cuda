@@ -274,7 +274,6 @@ __global__ void calcEnergyKernelMemOptimized(uint8_t *grayPixels, int width, int
                 int col_in_shared_mem = threadIdx.x + filterC;
 
                 // Calc convolution with X-Sobel filter
-                uint8_t grayPixel = s_grayPixels[grayPixelsR * width + grayPixelsC];
                 uint8_t grayPixel = s_grayPixels[row_in_shared_mem * (filterWidth + blockDim.x - 1) + col_in_shared_mem];
                 convolutionX += filterValX * (int)grayPixel;
 
@@ -470,6 +469,152 @@ __global__ void findMinimumSeamKernel(int *energyMap, int width, int height,
                 if (energyMin > L1[c + k])
                 {
                     energyMin = L1[c + k];
+                    idx = k;
+                }
+            }
+
+            backtrack[i] = c + idx;
+            L2[c] = energyMap[i] + energyMin;
+            // L2[c] = c;
+        }
+        __syncthreads();
+
+        // If the current block is the last block of current row, update bCount1 and reset bRowCount
+        if (threadIdx.x == 0 && (int)((bCount1 + 1) / blockPerRow) == r + 1)
+        {
+            bCount1 += 1;
+            bRowCount = 0;
+        }
+    }
+}
+
+__global__ void findMinimumSeamKernelMemOptimized(int *energyMap, int width, int height,
+                                      int *backtrack, volatile int *L1, volatile int *L2)
+{
+    __shared__ int bi;
+    extern __shared__ int s_L1[];
+
+    // Get the index bi that has the order
+    if (threadIdx.x == 0)
+    {
+        bi = atomicAdd(&bCount, 1);
+    }
+    __syncthreads();    
+
+    int blockPerRow = (width - 1) / blockDim.x + 1;
+    int r = bi / blockPerRow;
+    int c = (bi % blockPerRow) * blockDim.x + threadIdx.x;
+
+    if (r == 0)
+    {
+        // This block code like line "memcpy(L1, energyMap, width * sizeof(int));" in function findMinimumSeam
+        if (c < width)
+        {
+            L1[c] = energyMap[c];
+        }
+
+        __syncthreads();
+
+        if (threadIdx.x == 0)
+        {
+            while (bCount1 < bi)
+            {
+            }
+            bCount1 += 1;
+        }
+    }
+    else if (r < height)
+    {
+        while ((int)(bCount1 / blockPerRow) < r)
+        {
+        } // make sure previous rows complete the calculation
+
+        if (r > 1)
+        { // This block code like line "memcpy(L1, L2, width * sizeof(int));" in function findMinimumSeam
+            if (c < width)
+            {
+                L1[c] = L2[c];
+            }
+        }
+        __syncthreads();
+
+        while (bCount1 < bi)
+        {
+        } // make sure only 1 block updates bCount1 at a time
+
+        if (threadIdx.x == 0)
+        {
+            bRowCount += 1;
+            __threadfence();
+
+            if ((int)((bCount1 + 1) / blockPerRow) < r + 1)
+            {
+                // This condition to make sure this case:
+                // If width > blockSize.x: blockPerRow > 1:
+                //          The 1st, 2nd, 3rd, ... block of current row can update bCount1.
+                //          However, the last block of current row can only update bCount1 after completing the calculation of that block
+                // In case: blockPerRow == 1:
+                //          Update bCount1 after the current block completes the calculation
+                bCount1 += 1;
+            }
+        }
+
+        // Wait for block (bi+1) to finish setting L1[c] = L2[c], because current block uses the firsst L1 of block (bi+1)
+        while ((bi % blockPerRow + 2) > bRowCount && bRowCount < blockPerRow)
+        {
+        }
+
+        // load L1 to shared memory
+        int idx = threadIdx.x;
+        // size of L1 = num of columns
+        // L1 = 0 1 2 3 4 5 6 7 8 9 10
+        // blockSize.x = 3
+        // blockID = 0
+        // -> s_L1 = 0 1 2 3
+        // blockID = 1
+        // -> s_L1 = 2 3 4 5 6
+        // blockID = 2
+        // -> s_L1 = 5 6 7 8 9
+        // size of s_L1 = num of blockSize + 2 
+        if (idx < blockDim.x && c < width)
+        {
+            s_L1[idx + 1] = L1[c];
+        }
+
+        if (idx == 0)
+        {
+            if (c > 0)
+            {
+                s_L1[0] = L1[bi * blockDim.x - 1];
+            }
+
+            if (c < width)
+            {
+                s_L1[blockDim.x + 1] = L1[bi * blockDim.x + blockDim.x ];
+            }
+        }
+
+        __syncthreads();
+
+        if (c < width)
+        {
+            int i = r * width + c;
+            int idx;
+            int energyMin = 1e9;
+
+            for (int k = -1; k < 2; k++)
+            {
+                if ((c + k < 0) || (c + k == width))
+                    continue;
+
+
+                // k : -1 0 1 
+                // c : 0 -> width - 1
+                // k + c = -1 -> width
+                int L1_index_in_s_L1 = threadIdx.x + k + 1;
+                if (energyMin > s_L1[L1_index_in_s_L1])
+                {
+                    energyMin = s_L1[L1_index_in_s_L1];
                     idx = k;
                 }
             }
@@ -770,7 +915,7 @@ void seamCarving(uchar3 *inPixels, int width, int height, uchar3 *outPixels,
 
                 // Because we can only compute row by row sequentially, we have to use 1-dimensional block
                 // We set blockSize1D = blockSize2D.x * blockSize2D.y to utilize resources (blockSize2D = blockSize)
-                findMinimumSeamKernel<<<gridSizeBlock1D, blockSize1D>>>(d_energyMap, width - i, height,
+                findMinimumSeamKernelMemOptimized<<<gridSizeBlock1D, blockSize1D, (blockSize1D + 2) * sizeof(int)>>>(d_energyMap, width - i, height,
                                                                         d_backtrack, d_L1, d_L2);
                 cudaDeviceSynchronize();
                 CHECK(cudaGetLastError());
