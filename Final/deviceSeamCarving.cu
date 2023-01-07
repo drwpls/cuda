@@ -278,7 +278,7 @@ __global__ void findMinimumSeamKernel(int * energyMap, int width, int height,
     int blockPerRow = (width - 1) / blockDim.x + 1;
     int r = bi / blockPerRow;
     int c = (bi % blockPerRow) * blockDim.x + threadIdx.x;
-
+    
     if (r == 0) {
         // This block code like line "memcpy(L1, energyMap, width * sizeof(int));" in function findMinimumSeam
         if (c < width) {
@@ -363,7 +363,7 @@ void deleteSeam(uchar3 * inPixels, int width, int height, uchar3 * outPixels,
             posMin = i;
         }
     }
-    printf("\n%i %i\n", energyMin, posMin);
+    // printf("\n%i %i\n", energyMin, posMin);
     for (int r = height - 1; r >= 0; r--) {
         seamPath[r] = posMin;
         // printf("\n%i\n", seamPath[r]);
@@ -498,11 +498,28 @@ void seamCarving(uchar3 * inPixels, int width, int height, uchar3 * outPixels,
             }
             dim3 gridSizeBlock1D(((width - i - 1) / blockSize1D + 1) * height);
 
-            printf("\nblock size: %i , grid size: %i\n", blockSize1D, (int)gridSizeBlock1D.x);
+            // printf("\nblock size: %i , grid size: %i\n", blockSize1D, (int)gridSizeBlock1D.x);
 
-            convertGrayscaleKernel<<<gridSizeBlock2D, blockSize>>>(d_tempPixels, width - i, height, d_grayPixels);
-            cudaDeviceSynchronize();
-            CHECK(cudaGetLastError());
+            // convertGrayscaleKernel<<<gridSizeBlock2D, blockSize>>>(d_tempPixels, width - i, height, d_grayPixels);
+            // cudaDeviceSynchronize();
+            // CHECK(cudaGetLastError());
+
+
+            // We can convert to grayscale by kernel, but output may be in some places different from output of host.
+            // That leads to skewed results.
+            // So we convert to grayscale by host.
+            uchar3 * tempPixels = (uchar3 *)malloc((width - i) * height * sizeof(uchar3));
+            uint8_t * grayPixels = (uint8_t *)malloc((width - i) * height * sizeof(uint8_t));
+
+            CHECK(cudaMemcpy(tempPixels, d_tempPixels, (width - i) * height * sizeof(uchar3), cudaMemcpyDeviceToHost));
+            
+            convertGrayscale(tempPixels, width - i, height, grayPixels);
+
+            CHECK(cudaMemcpy(d_grayPixels, grayPixels, (width - i) * height * sizeof(uint8_t), cudaMemcpyHostToDevice));
+
+            free(tempPixels);
+            free(grayPixels);
+
 
             calcEnergyKernel<<<gridSizeBlock2D, blockSize>>>(d_grayPixels, width - i, height, d_energyMap,
                                                             d_filterXSobel, d_filterYSobel, filterWidth);
@@ -523,6 +540,7 @@ void seamCarving(uchar3 * inPixels, int width, int height, uchar3 * outPixels,
                                                             d_backtrack, d_L1, d_L2);
             cudaDeviceSynchronize();
             CHECK(cudaGetLastError());
+
             
             // memcpyDevice2DeviceInt<<<gridSizeBlock1D, blockSize1D>>>(d_L1, d_energyMap, width - i);
             // cudaDeviceSynchronize();
@@ -535,6 +553,38 @@ void seamCarving(uchar3 * inPixels, int width, int height, uchar3 * outPixels,
             //     printf("\n%i\n", L2[c]);
             // }
             // free(L2);
+
+            // int * energyMap = (int *)malloc((width - i) * height * sizeof(int));
+            // CHECK(cudaMemcpy(energyMap, d_energyMap, (width - i) * height * sizeof(int), cudaMemcpyDeviceToHost));
+
+            // int * backtrack = (int *)malloc((width - i) * height * sizeof(int));
+            // int * L1 = (int *)malloc((width - i) * sizeof(int));
+            // int * L2 = (int *)malloc((width - i) * sizeof(int));
+            // findMinimumSeam(energyMap, width - i, height, backtrack, L1, L2);
+
+            // int * seamPath = (int *)malloc(height * sizeof(int));
+            // int energyMin = 1e9, posMin;
+            // for (int k = 0; k < width - i; k++) {
+            //     // printf("\n%i\n", L2[i]);
+            //     if (energyMin > L2[k]) {
+            //         energyMin = L2[k];
+            //         posMin = k;
+            //     }
+            // }
+            // printf("\n%i %i\n", energyMin, posMin);
+            // for (int r = height - 1; r >= 0; r--) {
+            //     seamPath[r] = posMin;
+            //     // printf("\n%i\n", seamPath[r]);
+            //     posMin = backtrack[r * (width - i) + posMin];
+            // }
+
+            // CHECK(cudaMemcpy(d_seamPath, seamPath, height * sizeof(int), cudaMemcpyHostToDevice));
+
+            // free(energyMap);
+            // free(backtrack);
+            // free(L1);
+            // free(L2);
+
 
             // Exact seam path
             int energyMin = 1e9;
@@ -549,7 +599,7 @@ void seamCarving(uchar3 * inPixels, int width, int height, uchar3 * outPixels,
                     posMin[0] = k;
                 }
             }
-            printf("\n%i %i\n", energyMin, posMin[0]);
+            // printf("\n%i %i\n", energyMin, posMin[0]);
             for (int r = height - 1; r >= 0; r--) {
                 CHECK(cudaMemcpy(&d_seamPath[r], posMin, sizeof(int), cudaMemcpyHostToDevice));
                 // printf("\n%i\n", posMin[0]);
@@ -559,6 +609,7 @@ void seamCarving(uchar3 * inPixels, int width, int height, uchar3 * outPixels,
 
             free(posMin);
             free(curL2);
+
 
             deleteSeamKernel<<<gridSizeBlock2D, blockSize>>>(d_tempPixels, width - i, height, d_tempPixels1, d_seamPath);
             cudaDeviceSynchronize();
