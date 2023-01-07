@@ -692,6 +692,33 @@ __global__ void deleteSeamKernel(uchar3 *inPixels, int width, int height, uchar3
     }
 }
 
+
+__global__ void deleteSeamKernelMemOptimized(uchar3 *inPixels, int width, int height, uchar3 *outPixels, int *seamPath)
+{
+    extern __shared__ int s_seamPath[];
+
+    int r = blockIdx.y * blockDim.y + threadIdx.y;
+    int c = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (threadIdx.x == 0)
+    {
+        s_seamPath[threadIdx.y] = seamPath[r];
+    }
+
+    __syncthreads();
+
+    if (r < height && c < width && c != s_seamPath[threadIdx.y])
+    {
+        int i = r * width + c;
+        int _i = r * (width - 1) + c;
+
+        if (c > s_seamPath[threadIdx.y])
+            _i--;
+
+        outPixels[_i] = inPixels[i];
+    }
+}
+
 void outputResult(uchar3 *dstPixels, int width, int height, uchar3 *srcPixels)
 {
     for (int r = 0; r < height; r++)
@@ -947,7 +974,7 @@ void seamCarving(uchar3 *inPixels, int width, int height, uchar3 *outPixels,
                 free(posMin);
                 free(curL2);
 
-                deleteSeamKernel<<<gridSizeBlock2D, blockSize>>>(d_tempPixels, width - i, height, d_tempPixels1, d_seamPath);
+                deleteSeamKernelMemOptimized<<<gridSizeBlock2D, blockSize, blockSize.y * sizeof(int)>>>(d_tempPixels, width - i, height, d_tempPixels1, d_seamPath);
                 cudaDeviceSynchronize();
                 CHECK(cudaGetLastError());
 
