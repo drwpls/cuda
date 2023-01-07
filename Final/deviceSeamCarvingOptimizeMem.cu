@@ -218,24 +218,19 @@ __global__ void calcEnergyKernelMemOptimized(uint8_t *grayPixels, int width, int
         {
             for (int filterC = 0; filterC < filterWidth; filterC++)
             {
-                // Calc convolution with X-Sobel filter
                 int filterValX = d_const_filterXSobel[filterR * filterWidth + filterC];
 
                 int grayPixelsR = r - filterWidth / 2 + filterR;
                 int grayPixelsC = c - filterWidth / 2 + filterC;
                 grayPixelsR = min(max(0, grayPixelsR), height - 1);
                 grayPixelsC = min(max(0, grayPixelsC), width - 1);
+
+                // Calc convolution with X-Sobel filter
                 uint8_t grayPixel = grayPixels[grayPixelsR * width + grayPixelsC];
                 convolutionX += filterValX * (int)grayPixel;
 
                 // Calc convolution with Y-Sobel filter
                 int filterValY = d_const_filterYSobel[filterR * filterWidth + filterC];
-
-                grayPixelsR = r - filterWidth / 2 + filterR;
-                grayPixelsC = c - filterWidth / 2 + filterC;
-                grayPixelsR = min(max(0, grayPixelsR), height - 1);
-                grayPixelsC = min(max(0, grayPixelsC), width - 1);
-                grayPixel = grayPixels[grayPixelsR * width + grayPixelsC];
                 convolutionY += filterValY * (int)grayPixel;
             }
         }
@@ -682,9 +677,11 @@ void seamCarving(uchar3 *inPixels, int width, int height, uchar3 *outPixels,
 
         if (kernelType == 2) {
             CHECK(cudaMemcpyToSymbol(d_const_filterXSobel, filterXSobel, FILTER_WIDTH * FILTER_WIDTH *sizeof(int)));
-            CHECK(cudaMemcpyToSymbol(d_const_filterXSobel, filterXSobel, FILTER_WIDTH * FILTER_WIDTH *sizeof(int)));
             CHECK(cudaMemcpyToSymbol(d_const_filterYSobel, filterYSobel, FILTER_WIDTH * FILTER_WIDTH *sizeof(int)));
             
+            #ifdef DEBUG
+            printConstantFilterDEBUG<<<1, 1>>>();
+            #endif
 
             for (int i = 0; i < WIDTH_REMOVE; i++)
             {
@@ -770,6 +767,8 @@ void seamCarving(uchar3 *inPixels, int width, int height, uchar3 *outPixels,
             
 
         }
+        
+        
         CHECK(cudaMemcpy(outPixels, d_tempPixels, (width - WIDTH_REMOVE) * height * sizeof(uchar3), cudaMemcpyDeviceToHost));
 
         CHECK(cudaFree(d_grayPixels));
@@ -877,7 +876,7 @@ int main(int argc, char **argv)
     printError(outPixels1, outPixels, width - WIDTH_REMOVE, height);
 
     uchar3 *outPixels2 = (uchar3 *)malloc((width - (int)WIDTH_REMOVE) * height * sizeof(uchar3));
-    seamCarving(inPixels, width, height, outPixels1, filterXSobel, filterYSobel, filterWidth, true, blockSize, 2);
+    seamCarving(inPixels, width, height, outPixels2, filterXSobel, filterYSobel, filterWidth, true, blockSize, 2);
     printError(outPixels2, outPixels, width - WIDTH_REMOVE, height);
 
     // Write results to files
@@ -893,4 +892,6 @@ int main(int argc, char **argv)
     free(filterYSobel);
     free(outPixels);
     free(outPixels1);
+    free(outPixels2);
+
 }
