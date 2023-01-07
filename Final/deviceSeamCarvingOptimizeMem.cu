@@ -136,11 +136,12 @@ __global__ void convertGrayscaleKernel(uchar3 *inPixels, int width, int height, 
 
     if (r < height && c < width)
     {
-        int i = r * width + c;
-        uint8_t red = inPixels[i].x;
-        uint8_t green = inPixels[i].y;
-        uint8_t blue = inPixels[i].z;
-        grayPixels[i] = 0.299f * red + 0.587f * green + 0.114f * blue;
+        int index = r * width + c;
+        uchar3 inPixel = inPixels[index];
+        uint8_t red = inPixel.x;
+        uint8_t green = inPixel.y;
+        uint8_t blue = inPixel.z;
+        grayPixels[index] = 0.299f * red + 0.587f * green + 0.114f * blue;
     }
 }
 
@@ -202,8 +203,52 @@ __global__ void printConstantFilterDEBUG()
     }
 }
 
+
 __global__ void calcEnergyKernelMemOptimized(uint8_t *grayPixels, int width, int height, int *energyMap, int filterWidth)
 {
+
+    extern __shared__ uint8_t s_grayPixels[];
+
+    int top_left_x = blockIdx.x * blockDim.x - filterWidth / 2;
+    int top_left_y = blockIdx.y * blockDim.y - filterWidth / 2;
+    int bottom_right_x = top_left_x + blockDim.x + filterWidth - 1;
+    int bottom_right_y = top_left_y + blockDim.y + filterWidth - 1;
+    int shared_width = bottom_right_x - top_left_x;
+    int shared_height = bottom_right_y - top_left_y;
+
+    int total_cell = shared_width * shared_height;
+    int total_thread = blockDim.x * blockDim.y;
+
+    int cell_per_thread = (total_cell + total_thread - 1) / total_thread;
+    int thread_id = threadIdx.y * blockDim.x + threadIdx.x;
+
+    for (int i = 0; i < cell_per_thread; i++)
+    {
+        int serial_index_in_shared = i * total_thread + thread_id;
+        int x_in_shared_mem = serial_index_in_shared % shared_width;
+        int y_in_shared_mem = serial_index_in_shared / shared_width;
+
+        int x_in_global_mem = top_left_x + x_in_shared_mem;
+        int y_in_global_mem = top_left_y + y_in_shared_mem;
+
+        if (x_in_global_mem < 0)
+            x_in_global_mem = 0;
+        if (x_in_global_mem > width - 1)
+            x_in_global_mem = width - 1;
+        if (y_in_global_mem < 0)
+            y_in_global_mem = 0;
+        if (y_in_global_mem > height - 1)
+            y_in_global_mem = height - 1;
+
+        int index_in_global_mem = y_in_global_mem * width + x_in_global_mem;
+        int index_in_shared_mem = y_in_shared_mem * shared_width + x_in_shared_mem;
+        if (index_in_shared_mem < total_cell)
+            s_grayPixels[index_in_shared_mem] = grayPixels[index_in_global_mem];
+    }
+
+    __syncthreads();
+
+
     int r = blockIdx.y * blockDim.y + threadIdx.y;
     int c = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -225,8 +270,12 @@ __global__ void calcEnergyKernelMemOptimized(uint8_t *grayPixels, int width, int
                 grayPixelsR = min(max(0, grayPixelsR), height - 1);
                 grayPixelsC = min(max(0, grayPixelsC), width - 1);
 
+                int row_in_shared_mem = threadIdx.y + filterR;
+                int col_in_shared_mem = threadIdx.x + filterC;
+
                 // Calc convolution with X-Sobel filter
-                uint8_t grayPixel = grayPixels[grayPixelsR * width + grayPixelsC];
+                uint8_t grayPixel = s_grayPixels[grayPixelsR * width + grayPixelsC];
+                uint8_t grayPixel = s_grayPixels[row_in_shared_mem * (filterWidth + blockDim.x - 1) + col_in_shared_mem];
                 convolutionX += filterValX * (int)grayPixel;
 
                 // Calc convolution with Y-Sobel filter
@@ -238,6 +287,7 @@ __global__ void calcEnergyKernelMemOptimized(uint8_t *grayPixels, int width, int
         energyMap[i] = abs(convolutionX) + abs(convolutionY);
     }
 }
+
 __global__ void calcEnergyKernel(uint8_t *grayPixels, int width, int height, int *energyMap,
                                  int *filterXSobel, int *filterYSobel, int filterWidth)
 {
@@ -714,7 +764,7 @@ void seamCarving(uchar3 *inPixels, int width, int height, uchar3 *outPixels,
                 free(tempPixels);
                 free(grayPixels);
 
-                calcEnergyKernelMemOptimized<<<gridSizeBlock2D, blockSize>>>(d_grayPixels, width - i, height, d_energyMap, filterWidth);
+                calcEnergyKernelMemOptimized<<<gridSizeBlock2D, blockSize, (blockSize.x + filterWidth - 1) * (blockSize.y + filterWidth - 1) * sizeof(uint8_t)>>>(d_grayPixels, width - i, height, d_energyMap, filterWidth);
                 cudaDeviceSynchronize();
                 CHECK(cudaGetLastError());
 
@@ -763,8 +813,6 @@ void seamCarving(uchar3 *inPixels, int width, int height, uchar3 *outPixels,
                 CHECK(cudaMemcpyToSymbol(bCount, &zero, sizeof(int)));
                 CHECK(cudaMemcpyToSymbol(bCount1, &zero, sizeof(int)));
             }
-
-            
 
         }
         
